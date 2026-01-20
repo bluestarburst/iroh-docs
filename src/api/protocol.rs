@@ -302,6 +302,15 @@ pub struct AuthorDeleteRequest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthorDeleteResponse;
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RemovePeerRequest {
+    pub doc_id: NamespaceId,
+    pub peer_id: PeerIdBytes,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RemovePeerResponse;
+
 // Use the macro to generate both the DocsProtocol and DocsMessage enums
 // plus implement Channels for each type
 #[rpc_requests(message = DocsMessage)]
@@ -363,6 +372,8 @@ pub enum DocsProtocol {
     AuthorExport(AuthorExportRequest),
     #[rpc(tx = oneshot::Sender<RpcResult<AuthorDeleteResponse>>)]
     AuthorDelete(AuthorDeleteRequest),
+    #[rpc(tx = oneshot::Sender<RpcResult<RemovePeerResponse>>)]
+    RemovePeer(RemovePeerRequest),
 }
 
 /// Options to configure what is included in a [`iroh::EndpointAddr`].

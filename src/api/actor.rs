@@ -17,10 +17,11 @@ use super::{
         DocsProtocol, DropRequest, DropResponse, GetDownloadPolicyRequest,
         GetDownloadPolicyResponse, GetExactRequest, GetExactResponse, GetManyRequest,
         GetSyncPeersRequest, GetSyncPeersResponse, ImportRequest, ImportResponse, LeaveRequest,
-        LeaveResponse, ListRequest, ListResponse, OpenRequest, OpenResponse,
-        SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest, SetHashResponse,
-        SetRequest, SetResponse, ShareMode, ShareRequest, ShareResponse, StartSyncRequest,
-        StartSyncResponse, StatusRequest, StatusResponse, SubscribeRequest, SubscribeResponse,
+        LeaveResponse, ListRequest, ListResponse, OpenRequest, OpenResponse, RemovePeerRequest,
+        RemovePeerResponse, SetDownloadPolicyRequest, SetDownloadPolicyResponse, SetHashRequest,
+        SetHashResponse, SetRequest, SetResponse, ShareMode, ShareRequest, ShareResponse,
+        StartSyncRequest, StartSyncResponse, StatusRequest, StatusResponse, SubscribeRequest,
+        SubscribeResponse,
     },
     DocsApi, RpcError, RpcResult,
 };
@@ -220,6 +221,13 @@ impl RpcActor {
                 let result = self.author_delete(inner).await;
                 if let Err(e) = tx.send(result).await {
                     error!("Failed to send AuthorDelete response: {}", e);
+                }
+            }
+            DocsMessage::RemovePeer(remove_peer) => {
+                let WithChannels { tx, inner, .. } = remove_peer;
+                let result = self.doc_remove_peer(inner).await;
+                if let Err(e) = tx.send(result).await {
+                    error!("Failed to send RemovePeer response: {}", e);
                 }
             }
         }
@@ -597,5 +605,16 @@ impl RpcActor {
             .await
             .map_err(|e| RpcError::new(&*e))?;
         Ok(GetSyncPeersResponse { peers })
+    }
+
+    pub(super) async fn doc_remove_peer(
+        &self,
+        req: RemovePeerRequest,
+    ) -> RpcResult<RemovePeerResponse> {
+        self.sync
+            .remove_peer(req.doc_id, &req.peer_id)
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
+        Ok(RemovePeerResponse)
     }
 }

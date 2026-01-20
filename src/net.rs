@@ -31,19 +31,59 @@ pub async fn connect_and_sync(
 ) -> Result<SyncFinished, ConnectError> {
     let t_start = Instant::now();
     let peer_id = peer.id;
+    println!(
+        "[IROH-DOCS] 🔄 connect_and_sync: connecting to peer {} for namespace {}",
+        peer_id, namespace
+    );
     trace!("connect");
-    let connection = endpoint
-        .connect(peer, crate::ALPN)
-        .await
-        .map_err(ConnectError::connect)?;
+    let connection = match endpoint.connect(peer.clone(), crate::ALPN).await {
+        Ok(conn) => {
+            println!("[IROH-DOCS] ✓ ALPN connection established to {}", peer_id);
+            conn
+        }
+        Err(e) => {
+            println!(
+                "[IROH-DOCS] ✗ ALPN connection FAILED to {}: {:?}",
+                peer_id, e
+            );
+            return Err(ConnectError::connect(e));
+        }
+    };
 
-    let (mut send_stream, mut recv_stream) =
-        connection.open_bi().await.map_err(ConnectError::connect)?;
+    let (mut send_stream, mut recv_stream) = match connection.open_bi().await {
+        Ok(streams) => {
+            println!("[IROH-DOCS] ✓ Opened bi-stream to {}", peer_id);
+            streams
+        }
+        Err(e) => {
+            println!(
+                "[IROH-DOCS] ✗ Failed to open bi-stream to {}: {:?}",
+                peer_id, e
+            );
+            return Err(ConnectError::connect(e));
+        }
+    };
 
     let t_connect = t_start.elapsed();
+    println!(
+        "[IROH-DOCS] 🔄 Running sync protocol with {} (connect took {:?})",
+        peer_id, t_connect
+    );
     debug!(?t_connect, "connected");
 
     let res = run_alice(&mut send_stream, &mut recv_stream, sync, namespace, peer_id).await;
+    println!(
+        "[IROH-DOCS-DEBUG] connect_and_sync finished for peer {}. Result: {:?}",
+        peer_id,
+        res.as_ref()
+            .map(|x| format!("sent={}, recv={}", x.num_sent, x.num_recv))
+    );
+
+    println!(
+        "[IROH-DOCS] Sync protocol result: {:?}",
+        res.as_ref()
+            .map(|r| format!("sent={}, recv={}", r.num_sent, r.num_recv))
+    );
 
     send_stream.finish().map_err(ConnectError::close)?;
     send_stream.stopped().await.map_err(ConnectError::close)?;
@@ -120,6 +160,11 @@ where
         .await
         .map_err(|e| AcceptError::open(peer, e))?;
 
+    println!(
+        "[IROH-DOCS-DEBUG] handle_connection accepted bi-stream from peer {}",
+        peer
+    );
+
     let t_connect = t_start.elapsed();
     let span = error_span!("accept", peer = %peer.fmt_short(), namespace = tracing::field::Empty);
     span.in_scope(|| {
@@ -129,6 +174,7 @@ where
     let mut state = BobState::new(peer);
     let res = state
         .run(&mut send_stream, &mut recv_stream, sync, accept_cb)
+        .instrument(span.clone())
         .instrument(span.clone())
         .await;
 
@@ -142,6 +188,14 @@ where
 
     let namespace = state.namespace();
     let outcome = state.into_outcome();
+
+    println!(
+        "[IROH-DOCS-DEBUG] handle_connection BobState run finished for ns {} peer {}. Result: sent={}, recv={}",
+        namespace.map(|n| hex::encode(&n.as_bytes()[..4])).unwrap_or_else(|| "none".to_string()),
+        peer,
+        outcome.num_sent,
+        outcome.num_recv
+    );
 
     send_stream
         .finish()

@@ -191,6 +191,11 @@ enum ReplicaAction {
         #[debug("reply")]
         reply: oneshot::Sender<Result<DownloadPolicy>>,
     },
+    RemovePeer {
+        peer: PeerIdBytes,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// The state for an open replica.
@@ -394,6 +399,13 @@ impl SyncHandle {
     ) -> Result<Message<SignedEntry>> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::SyncInitialMessage { reply };
+        self.send_replica(namespace, action).await?;
+        rx.await?
+    }
+
+    pub async fn remove_peer(&self, namespace: NamespaceId, peer: &PeerIdBytes) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        let action = ReplicaAction::RemovePeer { peer: *peer, reply };
         self.send_replica(namespace, action).await?;
         rx.await?
     }
@@ -805,6 +817,11 @@ impl Actor {
                     Ok(res)
                 })
             }
+            ReplicaAction::RemovePeer { peer, reply } => {
+                send_reply_with(reply, self, move |this| {
+                    this.store.remove_peer(&namespace, &peer)
+                })
+            }
             ReplicaAction::SyncProcessMessage {
                 message,
                 from,
@@ -852,7 +869,8 @@ impl Actor {
             }
             ReplicaAction::DropReplica { reply } => send_reply_with(reply, self, |this| {
                 this.close(namespace);
-                this.store.remove_replica(&namespace)
+                this.store.remove_replica(&namespace)?;
+                this.store.flush()
             }),
             ReplicaAction::ExportSecretKey { reply } => {
                 let res = self

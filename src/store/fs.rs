@@ -433,6 +433,14 @@ impl Store {
             tables.namespaces.remove(namespace.as_bytes())?;
             tables.namespace_peers.remove_all(namespace.as_bytes())?;
             tables.download_policy.remove(namespace.as_bytes())?;
+            // Clear latest_per_author entries for this namespace to reset sync state
+            // Without this, stale timestamps persist and has_news_for_us() thinks
+            // the replica is already synced when re-imported after deletion
+            let start = (namespace.as_bytes(), &[u8::MIN; 32]);
+            let end = (namespace.as_bytes(), &[u8::MAX; 32]);
+            tables
+                .latest_per_author
+                .retain_in(start..=end, |_k, _v| false)?;
             Ok(())
         })
     }
@@ -580,6 +588,38 @@ impl Store {
         }
     }
 
+    /// Remove a specific peer from the sync peers list for a document.
+    pub fn remove_peer(&mut self, namespace: &NamespaceId, peer: &PeerIdBytes) -> Result<()> {
+        self.modify(|tables| {
+            let namespace = namespace.as_bytes();
+            // ensure the document exists
+            anyhow::ensure!(
+                tables.namespaces.get(&namespace)?.is_some(),
+                "document not created"
+            );
+
+            // We need to iterate to find the entry with this peer, as the key is only namespace
+            // MultimapTable::get returns iterator of keys? No, iterator of values for key.
+            // We need to find the (Nanos, PeerIdBytes) where PeerIdBytes matches.
+            // And then remove THAT specific (Nanos, PeerIdBytes).
+
+            // To do this safely while modifying, we should collect first.
+            let mut to_remove = Vec::new();
+
+            for result in tables.namespace_peers.get(namespace)? {
+                let (nanos, &p) = result?.value();
+                if &p == peer {
+                    to_remove.push((nanos, p));
+                }
+            }
+
+            for (nanos, p) in to_remove {
+                tables.namespace_peers.remove(namespace, (nanos, &p))?;
+            }
+            Ok(())
+        })
+    }
+
     /// Set the download policy for a namespace.
     pub fn set_download_policy(
         &mut self,
@@ -715,11 +755,21 @@ impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
         let elements = self.get_range(range.clone())?;
 
         let mut fp = Fingerprint::empty();
+        let mut count = 0;
         for el in elements {
             let el = el?;
+            count += 1;
             fp ^= el.as_fingerprint();
         }
-
+        if count > 0 || !range.is_all() {
+            println!(
+                "[IROH-DOCS-SYNC] get_fingerprint: ns={} range={:?} count={} fp={:?}",
+                self.namespace.fmt_short(),
+                range,
+                count,
+                fp
+            );
+        }
         Ok(fp)
     }
 

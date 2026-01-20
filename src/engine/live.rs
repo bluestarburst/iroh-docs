@@ -37,7 +37,7 @@ use crate::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
         SyncFinished,
     },
-    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
+    AuthorHeads, ContentStatus, NamespaceId, PeerIdBytes, SignedEntry,
 };
 
 /// An iroh-docs operation
@@ -368,9 +368,15 @@ impl LiveActor {
 
     #[instrument("connect", skip_all, fields(peer = %peer.fmt_short(), namespace = %namespace.fmt_short()))]
     fn sync_with_peer(&mut self, namespace: NamespaceId, peer: PublicKey, reason: SyncReason) {
+        println!(
+            "[IROH-DOCS] sync_with_peer called: namespace={}, peer={}, reason={:?}",
+            namespace, peer, reason
+        );
         if !self.state.start_connect(&namespace, peer, reason) {
+            println!("[IROH-DOCS] ✗ sync_with_peer ABORTED: state.start_connect returned false for namespace={}", namespace);
             return;
         }
+        println!("[IROH-DOCS] ✓ sync_with_peer proceeding: spawning connect_and_sync task");
         let endpoint = self.endpoint.clone();
         let sync = self.sync.clone();
         let metrics = self.metrics.clone();
@@ -628,6 +634,11 @@ impl LiveActor {
         if resync {
             self.sync_with_peer(namespace, peer, SyncReason::Resync);
         }
+    }
+
+    /// Remove a peer from the known peers list for a document
+    pub async fn remove_peer(&self, namespace: NamespaceId, peer: PeerIdBytes) -> Result<()> {
+        self.sync.remove_peer(namespace, &peer).await
     }
 
     async fn broadcast_neighbors(&mut self, namespace: NamespaceId, op: &Op) {

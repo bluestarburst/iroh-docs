@@ -418,6 +418,7 @@ pub trait Store<E: RangeEntry>: Sized {
             let local_fingerprint = self.get_fingerprint(&range)?;
             // Case1 Match, nothing to do
             if local_fingerprint == fingerprint {
+                // println!("[IROH-DOCS-SYNC] ✅ Case1 Match: range={:?} fp={:?}", range, fingerprint);
                 continue;
             }
 
@@ -427,6 +428,15 @@ pub trait Store<E: RangeEntry>: Sized {
                 let values = self
                     .get_range(range.clone())?
                     .collect::<Result<Vec<_>, _>>()?;
+
+                println!(
+                    "[IROH-DOCS-SYNC] ⚓ Case2 Anchor: range={:?} local_values={} other_fp={:?} -> sending RangeItem with count={}",
+                    range,
+                    num_local_values,
+                    fingerprint,
+                    values.len()
+                );
+
                 let values = values.into_iter().map(|entry| async {
                     let content_status = content_status_cb(&entry).await;
                     (entry, content_status)
@@ -439,6 +449,12 @@ pub trait Store<E: RangeEntry>: Sized {
                 }));
             } else {
                 // Case3 Recurse
+                println!(
+                    "[IROH-DOCS-SYNC] 🌳 Case3 Recurse: range={:?} local_values={} other_fp={:?} -> splitting",
+                    range,
+                    num_local_values,
+                    fingerprint
+                );
                 // Create partition
                 // m0 = x < m1 < .. < mk = y, with k>= 2
                 // such that [ml, ml+1) is nonempty

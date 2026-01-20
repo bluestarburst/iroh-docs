@@ -567,6 +567,14 @@ where
         // update state with outgoing data.
         if let Some(ref reply) = reply {
             state.num_sent += reply.value_count();
+            println!(
+                "[IROH-DOCS-SYNC] {} ProcessMessage from {}: values_sent={} total_sent={} total_recv={}",
+                hex::encode(&my_namespace.as_bytes()[..4]),
+                hex::encode(&from_peer[..4]),
+                reply.value_count(),
+                state.num_sent,
+                state.num_recv
+            );
         }
 
         Ok(reply)

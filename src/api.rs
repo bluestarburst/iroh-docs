@@ -34,9 +34,9 @@ use self::{
         AuthorGetDefaultRequest, AuthorImportRequest, AuthorListRequest, AuthorSetDefaultRequest,
         CloseRequest, CreateRequest, DelRequest, DocsProtocol, DropRequest,
         GetDownloadPolicyRequest, GetExactRequest, GetManyRequest, GetSyncPeersRequest,
-        ImportRequest, LeaveRequest, ListRequest, OpenRequest, SetDownloadPolicyRequest,
-        SetHashRequest, SetRequest, ShareMode, ShareRequest, StartSyncRequest, StatusRequest,
-        SubscribeRequest,
+        ImportRequest, LeaveRequest, ListRequest, OpenRequest, RemovePeerRequest,
+        SetDownloadPolicyRequest, SetHashRequest, SetRequest, ShareMode, ShareRequest,
+        StartSyncRequest, StatusRequest, SubscribeRequest,
     },
 };
 use crate::{
@@ -44,6 +44,7 @@ use crate::{
     engine::{Engine, LiveEvent},
     store::{DownloadPolicy, Query},
     Author, AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes,
+    SignedEntry,
 };
 
 pub(crate) mod actor;
@@ -111,6 +112,7 @@ impl DocsApi {
                     DocsProtocol::AuthorImport(msg) => local.send((msg, tx)).await,
                     DocsProtocol::AuthorExport(msg) => local.send((msg, tx)).await,
                     DocsProtocol::AuthorDelete(msg) => local.send((msg, tx)).await,
+                    DocsProtocol::RemovePeer(msg) => local.send((msg, tx)).await,
                 }
             })
         });
@@ -392,6 +394,15 @@ impl Doc {
         &self,
         query: impl Into<Query>,
     ) -> Result<impl Stream<Item = Result<Entry>>> {
+        let stream = self.get_many_signed(query).await?;
+        Ok(stream.map(|res| res.map(|entry| entry.into())))
+    }
+
+    /// Returns all signed entries matching the query.
+    pub async fn get_many_signed(
+        &self,
+        query: impl Into<Query>,
+    ) -> Result<impl Stream<Item = Result<SignedEntry>>> {
         self.ensure_open()?;
         let stream = self
             .inner
@@ -406,7 +417,7 @@ impl Doc {
         Ok(stream.into_stream().map(|res| match res {
             Err(err) => Err(err.into()),
             Ok(Err(err)) => Err(err.into()),
-            Ok(Ok(res)) => Ok(res.into()),
+            Ok(Ok(res)) => Ok(res),
         }))
     }
 
@@ -522,6 +533,18 @@ impl Doc {
             })
             .await??;
         Ok(response.peers)
+    }
+
+    /// Explicitly remove a peer from the sync state of this document.
+    pub async fn remove_peer(&self, peer_id: PeerIdBytes) -> Result<()> {
+        self.ensure_open()?;
+        self.inner
+            .rpc(RemovePeerRequest {
+                doc_id: self.namespace_id,
+                peer_id,
+            })
+            .await??;
+        Ok(())
     }
 
     /// Adds an entry from an absolute file path
