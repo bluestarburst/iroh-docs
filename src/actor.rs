@@ -868,7 +868,19 @@ impl Actor {
                 Ok(())
             }
             ReplicaAction::DropReplica { reply } => send_reply_with(reply, self, |this| {
-                this.close(namespace);
+                // Force-close the replica regardless of the open-handle count.
+                //
+                // The normal `this.close(namespace)` path only calls
+                // `store.close_replica()` when the handle count reaches zero.
+                // If any background task still holds an open handle, the replica
+                // remains in `store.open_replicas`, and the subsequent
+                // `remove_replica` call fails with "replica is not closed".
+                //
+                // A drop/delete operation must be unconditional: remove the entry
+                // from the in-memory OpenReplicas map and from the store's open
+                // set before trying to delete the on-disk data.
+                this.states.force_close(namespace);
+                this.store.close_replica(namespace);
                 this.store.remove_replica(&namespace)?;
                 this.store.flush()
             }),
@@ -1026,6 +1038,16 @@ impl OpenReplicas {
 
     fn close_all(&mut self) -> impl Iterator<Item = NamespaceId> + '_ {
         self.0.drain().map(|(n, _s)| n)
+    }
+
+    /// Unconditionally remove a replica from the open-replicas map, regardless
+    /// of the current handle count.  Used during `DropReplica` so that the
+    /// following `store.remove_replica` call does not see the namespace as still
+    /// open.
+    fn force_close(&mut self, namespace: NamespaceId) {
+        if self.0.remove(&namespace).is_some() {
+            debug!(namespace = %namespace.fmt_short(), "force close");
+        }
     }
 }
 
